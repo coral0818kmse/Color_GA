@@ -188,76 +188,74 @@ def generate_initial_population(base_color_data, color_by_id, tone_hue_map, tone
     return population[:n]
 
 
-def generate_next_generation(population, color_by_id, tone_hue_map, tone_sb_coords, all_colors_list, target_data_list, human_weights):
+def generate_next_generation(population, all_colors_list):
     base_color_data = population[0]['base_color_data']
     next_gen = []
     existing_fingerprints = set()
     
+    # 純粋対話型なので、スコアはユーザーが入力した user_score をそのまま使用する
     for p in population:
-        p['final_score'] = p.get('user_score', 5) if p.get('user_score', 5) != 5 else calculate_full_fitness(p, target_data_list, base_color_data, tone_sb_coords, human_weights)
+        p['final_score'] = float(p.get('user_score', 5.0))
     
+    # エリート保存（9点以上の優秀な個体はそのまま次世代へ）
     for elite in sorted([p for p in population if p['final_score'] >= 9.0], key=lambda x: -x['final_score']):
         fp = get_individual_fingerprint(elite)
         if fp not in existing_fingerprints:
             next_gen.append(json.loads(json.dumps(elite)))
             existing_fingerprints.add(fp)
 
-    # --- 修正ポイント：親プールの安全網を確実に機能させる ---
+    # --- 親プールの安全網 ---
     parent_pool = [p for p in population if p['final_score'] >= 6.0]
     
     # 6点以上の個体が2個未満（0個または1個）しかない場合のフォールバック
     if len(parent_pool) < 2:
-        # スコア順に並べ替えた集団全体を親プールとして代用する
         parent_pool = sorted(population, key=lambda x: -x['final_score'])
-        
-        # 万が一、初期集団自体が2個未満だった場合のエラー防止
         if len(parent_pool) < 2:
-            raise ValueError("エラー: 母集団(population)の数が2未満です。初期生成を見直してください。")
-    # ----------------------------------------------------
+            raise ValueError("エラー: 母集団(population)の数が2未満です。")
+    # ------------------------
 
     attempts = 0
     while len(next_gen) < len(population) and attempts < len(population) * 500:
         attempts += 1
-        # ここで確実に2個以上の要素を持つ parent_pool からサンプリングされるようになります
         p1, p2 = random.sample(parent_pool, 2)
         new_g1, new_g2 = dict(p1['gene1_color_data']), dict(p2['gene2_color_data'])
 
+        # 突然変異（AIターゲットが無いので、純粋にランダムな色に変更）
         if random.random() < 0.20:
-            mut_tgt = random.choice(target_data_list)
-            gene_ref = random.choice([new_g1, new_g2])
-            mut_cand = dict(gene_ref)
-            
-            tgt_tone = mut_tgt['target_tone_1'] if gene_ref is new_g1 else mut_tgt['target_tone_2']
-            tgt_hue = mut_tgt['target_hue_1'] if gene_ref is new_g1 else mut_tgt['target_hue_2']
+            gene_ref_idx = random.choice([1, 2])
+            # 白・黒・グレー、およびベース色以外からランダムに選出
+            valid_colors = [c for c in all_colors_list if c['Tone'] not in ('W','Bk','Gy') and c['ID'] != base_color_data['ID']]
+            if valid_colors:
+                mut_cand = random.choice(valid_colors)
+                if gene_ref_idx == 1:
+                    new_g1 = mut_cand
+                else:
+                    new_g2 = mut_cand
 
-            valid_colors = [c for c in all_colors_list if c['Tone'] == mut_cand['Tone'] and c['Tone'] not in ('W','Bk','Gy')]
-            if valid_colors: mut_cand = random.choice(valid_colors)
-
-            if gene_ref is new_g1: new_g1 = mut_cand
-            else: new_g2 = mut_cand
-
-        if len({base_color_data['ID'], new_g1['ID'], new_g2['ID']}) < 3: continue
+        # 3色が被ってしまった場合はスキップ
+        if len({base_color_data['ID'], new_g1['ID'], new_g2['ID']}) < 3: 
+            continue
         
-        ind = {'base_color_data': base_color_data, 'gene1_color_data': new_g1, 'gene2_color_data': new_g2, 'score': (0,0), 'user_score': 5}
-        ind['final_score'] = calculate_full_fitness(ind, target_data_list, base_color_data, tone_sb_coords, human_weights)
+        ind = {'base_color_data': base_color_data, 'gene1_color_data': new_g1, 'gene2_color_data': new_g2, 'score': (0,0), 'user_score': 5.0, 'final_score': 5.0}
         
         fp = get_individual_fingerprint(ind)
         if fp not in existing_fingerprints:
             next_gen.append(ind)
             existing_fingerprints.add(fp)
     
+    # 規定数に満たない場合は前世代のスコア上位からそのまま補充
     sorted_pop = sorted(population, key=lambda x: -x['final_score'])
     for p in sorted_pop:
         if len(next_gen) >= len(population): break
         c_p = json.loads(json.dumps(p))
-        c_p['user_score'] = 5
+        c_p['user_score'] = 5.0
+        c_p['final_score'] = 5.0
         fp = get_individual_fingerprint(c_p)
         if fp not in existing_fingerprints:
             next_gen.append(c_p)
             existing_fingerprints.add(fp)
 
     return next_gen[:len(population)]
-
 
 # --- 配色表示 (配置入れ替え対応) ---
 def display_population_with_input(population):
