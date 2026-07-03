@@ -328,11 +328,23 @@ def generate_next_generation(population, color_by_id, tone_hue_map, tone_sb_coor
             next_gen.append(json.loads(json.dumps(elite)))
             existing_fingerprints.add(fp)
 
-    parent_pool = [p for p in population if p['final_score'] >= 6.0] or sorted(population, key=lambda x: -x['final_score'])[:max(2, len(population))]
+    # --- 修正ポイント：親プールの安全網を確実に機能させる ---
+    parent_pool = [p for p in population if p['final_score'] >= 6.0]
+    
+    # 6点以上の個体が2個未満（0個または1個）しかない場合のフォールバック
+    if len(parent_pool) < 2:
+        # スコア順に並べ替えた集団全体を親プールとして代用する
+        parent_pool = sorted(population, key=lambda x: -x['final_score'])
+        
+        # 万が一、初期集団自体が2個未満だった場合のエラー防止
+        if len(parent_pool) < 2:
+            raise ValueError("エラー: 母集団(population)の数が2未満です。初期生成を見直してください。")
+    # ----------------------------------------------------
 
     attempts = 0
     while len(next_gen) < len(population) and attempts < len(population) * 500:
         attempts += 1
+        # ここで確実に2個以上の要素を持つ parent_pool からサンプリングされるようになります
         p1, p2 = random.sample(parent_pool, 2)
         new_g1, new_g2 = dict(p1['gene1_color_data']), dict(p2['gene2_color_data'])
 
