@@ -247,57 +247,69 @@ def generate_initial_population(base_color_data, color_by_id, tone_hue_map, tone
     return population[:n]
 
 
-def generate_next_generation(population, all_colors_list):
+def generate_next_generation(population, color_by_id, tone_hue_map, tone_sb_coords, all_colors_list, target_data_list, human_weights):
     base_color_data = population[0]['base_color_data']
     next_gen = []
     existing_fingerprints = set()
     
-    # 全個体の適応度（fitness）は、ユーザーの評価スコアのみ
     for p in population:
-        p['final_score'] = p.get('user_score', 5.0)
+        p['final_score'] = p.get('user_score', 5) if p.get('user_score', 5) != 5 else calculate_full_fitness(p, target_data_list, base_color_data, tone_sb_coords, human_weights)
     
-    # ユーザー評価が高いもの（8点以上）をエリートとして残す
-    for elite in sorted([p for p in population if p['final_score'] >= 8.0], key=lambda x: -x['final_score']):
+    for elite in sorted([p for p in population if p['final_score'] >= 9.0], key=lambda x: -x['final_score']):
         fp = get_individual_fingerprint(elite)
         if fp not in existing_fingerprints:
             next_gen.append(json.loads(json.dumps(elite)))
             existing_fingerprints.add(fp)
 
-# 交差の親となるプール（6点以上を抽出、2個体に満たない場合は上位2個体を採用）
+    # --- 修正ポイント：親プールの安全網を確実に機能させる ---
     parent_pool = [p for p in population if p['final_score'] >= 6.0]
+    
+    # 6点以上の個体が2個未満（0個または1個）しかない場合のフォールバック
     if len(parent_pool) < 2:
-        parent_pool = sorted(population, key=lambda x: -x['final_score'])[:2]
+        # スコア順に並べ替えた集団全体を親プールとして代用する
+        parent_pool = sorted(population, key=lambda x: -x['final_score'])
+        
+        # 万が一、初期集団自体が2個未満だった場合のエラー防止
+        if len(parent_pool) < 2:
+            raise ValueError("エラー: 母集団(population)の数が2未満です。初期生成を見直してください。")
+    # ----------------------------------------------------
 
     attempts = 0
     while len(next_gen) < len(population) and attempts < len(population) * 500:
         attempts += 1
+        # ここで確実に2個以上の要素を持つ parent_pool からサンプリングされるようになります
         p1, p2 = random.sample(parent_pool, 2)
         new_g1, new_g2 = dict(p1['gene1_color_data']), dict(p2['gene2_color_data'])
 
-        # 突然変異（ランダムな色に変更）
         if random.random() < 0.20:
+            mut_tgt = random.choice(target_data_list)
             gene_ref = random.choice([new_g1, new_g2])
-            mut_cand = random.choice([c for c in all_colors_list if c['Tone'] not in ('W','Bk','Gy')])
+            mut_cand = dict(gene_ref)
+            
+            tgt_tone = mut_tgt['target_tone_1'] if gene_ref is new_g1 else mut_tgt['target_tone_2']
+            tgt_hue = mut_tgt['target_hue_1'] if gene_ref is new_g1 else mut_tgt['target_hue_2']
+
+            valid_colors = [c for c in all_colors_list if c['Tone'] == mut_cand['Tone'] and c['Tone'] not in ('W','Bk','Gy')]
+            if valid_colors: mut_cand = random.choice(valid_colors)
+
             if gene_ref is new_g1: new_g1 = mut_cand
             else: new_g2 = mut_cand
 
         if len({base_color_data['ID'], new_g1['ID'], new_g2['ID']}) < 3: continue
         
-        # 新しく生成された個体は一律5.0点からスタート
-        ind = {'base_color_data': base_color_data, 'gene1_color_data': new_g1, 'gene2_color_data': new_g2, 'score': (0,0), 'user_score': 5.0, 'final_score': 5.0}
+        ind = {'base_color_data': base_color_data, 'gene1_color_data': new_g1, 'gene2_color_data': new_g2, 'score': (0,0), 'user_score': 5}
+        ind['final_score'] = calculate_full_fitness(ind, target_data_list, base_color_data, tone_sb_coords, human_weights)
         
         fp = get_individual_fingerprint(ind)
         if fp not in existing_fingerprints:
             next_gen.append(ind)
             existing_fingerprints.add(fp)
     
-    # 規定数に満たない場合は元の集団からスコアが高い順に補充
     sorted_pop = sorted(population, key=lambda x: -x['final_score'])
     for p in sorted_pop:
         if len(next_gen) >= len(population): break
         c_p = json.loads(json.dumps(p))
-        c_p['user_score'] = 5.0
-        c_p['final_score'] = 5.0
+        c_p['user_score'] = 5
         fp = get_individual_fingerprint(c_p)
         if fp not in existing_fingerprints:
             next_gen.append(c_p)
